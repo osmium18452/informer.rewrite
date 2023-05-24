@@ -1,41 +1,142 @@
+import argparse
+
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib as mpl
+import torch
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from DataPreprocess import DataPreprocessor
 from DataSet import DataSet
-
-
-def position_encoding(length, dimension, kind='sinusodial', period=10000):
-    if kind == 'sinusodial':
-        position_encoding = np.zeros((length, dimension))
-        for i in range(length):
-            for j in range(dimension):
-                if j % 2 == 0:
-                    position_encoding[i, j] = np.sin(i / period ** (j / dimension))
-                else:
-                    position_encoding[i, j] = np.cos(i / period ** (j / dimension))
-        return position_encoding
-    else:
-        return None
-
+from models.model import Informer
 
 if __name__ == '__main__':
-    input_length = 20
-    induce_length = 5
-    pred_length = 10
-    encoding_dimension = 6
-    encoding_type = 'time_encoding'
-    batch_size = 30
-    data_preprocessor = DataPreprocessor('data/ETTh1.pkl', input_length, pred_length, encoding_type=encoding_type,
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-b', '--batch_size', type=int, default=30)
+    parser.add_argument('-c', '--cuda_device', type=str, default='0')
+    parser.add_argument('-d', '--dataset', type=str, default='wht')
+    parser.add_argument('-E', '--encoding_dimension', type=int, default=6)
+    parser.add_argument('-e', '--epoch', type=int, default=10)
+    parser.add_argument('-G', '--use_cuda', action='store_true')
+    parser.add_argument('-i', '--input_length', type=int, default=60)
+    parser.add_argument('-l', '--learning_rate', type=float, default=0.0001)
+    parser.add_argument('-n', '--normalize', type=str, default='std')
+    parser.add_argument('-p', '--pred_length', type=int, default=24)
+    parser.add_argument('-t', '--encoding_type', type=str, default='time_encoding')
+    parser.add_argument('-u', '--induce_length', type=int, default=5)
+    args = parser.parse_args()
+
+    total_epoch = args.epoch
+    input_length = args.input_length
+    induce_length = args.induce_length
+    pred_length = args.pred_length
+    encoding_dimension = args.encoding_dimension
+    encoding_type = args.encoding_type
+    batch_size = args.batch_size
+    use_cuda = args.use_cuda
+    learning_rate = args.learning_rate
+    normalize = args.normalize
+
+    device = torch.device('cuda:' + str(args.cuda_device) if use_cuda else 'cpu')
+
+    data_dir = None
+    if args.dataset == 'wht':
+        data_dir = 'data/WTH.pkl'
+    else:
+        print('invalid data')
+        exit()
+
+    data_preprocessor = DataPreprocessor(data_dir, input_length, pred_length, encoding_type=encoding_type,
                                          encoding_dimension=encoding_dimension)
     train_set = DataSet(data_preprocessor.load_train_set(), data_preprocessor.load_train_encoding_set(),
                         input_length, induce_length, pred_length)
+    validate_set = DataSet(data_preprocessor.load_validate_set(), data_preprocessor.load_validate_encoding_set(),
+                           input_length, induce_length, pred_length)
     test_set = DataSet(data_preprocessor.load_test_set(), data_preprocessor.load_test_encoding_set(),
                        input_length, induce_length, pred_length)
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
+    validate_loader = DataLoader(validate_set, batch_size=batch_size, shuffle=False)
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False)
 
-    for i, (input_x, input_y, encoding_x, encoding_y, ground_truth) in enumerate(train_loader):
-        print(i, input_x.shape, input_y.shape, encoding_x.shape, encoding_y.shape, ground_truth.shape)
+    # for i, (enc_input, enc_encoding, dec_input, dec_encoding,ground_truth) in enumerate(train_loader):
+    #     print(enc_input.shape,enc_encoding.shape,dec_input.shape,dec_encoding.shape,ground_truth.shape)
+    #     exit()
+    enc_in = data_preprocessor.load_enc_dimension()
+    dec_in = data_preprocessor.load_dec_dimension()
+    c_out = data_preprocessor.load_output_dimension()
+    out_len = pred_length
+    model = Informer(enc_in, dec_in, c_out, out_len)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    criterion = torch.nn.MSELoss()
+    model = model.to(device)
+
+    pbar_epoch = tqdm(total=total_epoch, ascii=True, dynamic_ncols=True)
+    for epoch in range(total_epoch):
+        model.train()
+        total_iters = len(train_loader)
+        pbar_iter = tqdm(total=total_iters, ascii=True, leave=False, dynamic_ncols=True)
+        pbar_iter.set_description('training')
+        for i, (enc_input, enc_encoding, dec_input, dec_encoding, ground_truth) in enumerate(train_loader):
+            enc_input = enc_input.to(device)
+            enc_encoding = enc_encoding.to(device)
+            dec_input = dec_input.to(device)
+            dec_encoding = dec_encoding.to(device)
+            ground_truth = ground_truth.to(device)
+            optimizer.zero_grad()
+            pred = model(enc_input, enc_encoding, dec_input, dec_encoding)
+            loss = criterion(pred, ground_truth)
+            loss.backward()
+            optimizer.step()
+            pbar_iter.update(1)
+            pbar_iter.set_postfix_str('loss: %.4f' % loss.item())
+        pbar_iter.close()
+
+        model.eval()
+        total_iters = len(validate_loader)
+        pbar_iter = tqdm(total=total_iters, ascii=True, leave=False, dynamic_ncols=True)
+        pbar_iter.set_description('validating')
+        prediction_list = []
+        gt_list = []
+        with torch.no_grad():
+            for i, (enc_input, enc_encoding, dec_input, dec_encoding, ground_truth) in enumerate(validate_loader):
+                # print(enc_input.shape,enc_encoding.shape,dec_input.shape,dec_encoding.shape)
+                # exit()
+                enc_input = enc_input.to(device)
+                enc_encoding = enc_encoding.to(device)
+                dec_input = dec_input.to(device)
+                dec_encoding = dec_encoding.to(device)
+                ground_truth = ground_truth.to(device)
+                pred = model(enc_input, enc_encoding, dec_input, dec_encoding)
+                prediction_list.append(pred)
+                gt_list.append(ground_truth)
+                pbar_iter.update(1)
+            predictions = torch.cat(prediction_list, dim=0)
+            ground_truths = torch.cat(gt_list, dim=0)
+            validate_loss = criterion(predictions, ground_truths)
+            pbar_epoch.set_postfix_str('loss: %.4f' % validate_loss.item())
+            pbar_epoch.update()
+        pbar_iter.close()
+    pbar_epoch.close()
+
+    model.eval()
+    total_iters = len(test_loader)
+    pbar_iter = tqdm(total=total_iters, ascii=True, dynamic_ncols=True)
+    pbar_iter.set_description('testing')
+    prediction_list = []
+    gt_list = []
+    with torch.no_grad():
+        for i, (enc_input, enc_encoding, dec_input, dec_encoding, ground_truth) in enumerate(test_loader):
+            enc_input = enc_input.to(device)
+            enc_encoding = enc_encoding.to(device)
+            dec_input = dec_input.to(device)
+            dec_encoding = dec_encoding.to(device)
+            ground_truth = ground_truth.to(device)
+            pred = model(enc_input, enc_encoding, dec_input, dec_encoding)
+            prediction_list.append(pred)
+            gt_list.append(ground_truth)
+            pbar_iter.update(1)
+        pbar_iter.close()
+        predictions = torch.cat(prediction_list, dim=0)
+        ground_truths = torch.cat(gt_list, dim=0)
+        test_loss = criterion(predictions, ground_truths)
+        print('\033[35mloss: %.4f\033[0m' % test_loss.item())
