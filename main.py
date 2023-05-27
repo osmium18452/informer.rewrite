@@ -1,4 +1,6 @@
 import argparse
+import os.path
+import platform
 
 import numpy as np
 import torch
@@ -39,9 +41,16 @@ if __name__ == '__main__':
 
     device = torch.device('cuda:' + str(args.cuda_device) if use_cuda else 'cpu')
 
+    data_root = None
+    if platform.system() == 'Windows':
+        data_root = 'E:\\forecastdataset\\pkl'
+    else:
+        data_root = '/home/icpc/pycharmproj/forecast.dataset/pkl/'
     data_dir = None
     if args.dataset == 'wht':
-        data_dir = 'data/WTH.pkl'
+        data_dir = os.path.join(data_root, 'wht.pkl')
+    elif args.dataset == 'synthetic':
+        data_dir = os.path.join(data_root, 'synthetic.pkl')
     else:
         print('invalid data')
         exit()
