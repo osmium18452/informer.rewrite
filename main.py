@@ -1,6 +1,5 @@
 import argparse
 
-import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -20,11 +19,14 @@ if __name__ == '__main__':
     parser.add_argument('-G', '--use_cuda', action='store_true')
     parser.add_argument('-i', '--input_length', type=int, default=60)
     parser.add_argument('-l', '--learning_rate', type=float, default=0.0001)
+    parser.add_argument('-M', '--multiGPU', action='store_true')
     parser.add_argument('-n', '--normalize', type=str, default='std')
     parser.add_argument('-p', '--pred_length', type=int, default=24)
     parser.add_argument('-t', '--encoding_type', type=str, default='time_encoding')
+    parser.add_argument('-s', '--stride', type=int, default=1)
     parser.add_argument('-u', '--induce_length', type=int, default=5)
     args = parser.parse_args()
+    print(args)
 
     total_epoch = args.epoch
     input_length = args.input_length
@@ -36,6 +38,7 @@ if __name__ == '__main__':
     use_cuda = args.use_cuda
     learning_rate = args.learning_rate
     normalize = args.normalize
+    stride=args.stride
 
     device = torch.device('cuda:' + str(args.cuda_device) if use_cuda else 'cpu')
 
@@ -47,7 +50,7 @@ if __name__ == '__main__':
         exit()
 
     data_preprocessor = DataPreprocessor(data_dir, input_length, pred_length, encoding_type=encoding_type,
-                                         encoding_dimension=encoding_dimension)
+                                         encoding_dimension=encoding_dimension,stride=stride)
     train_set = DataSet(data_preprocessor.load_train_set(), data_preprocessor.load_train_encoding_set(),
                         input_length, induce_length, pred_length)
     validate_set = DataSet(data_preprocessor.load_validate_set(), data_preprocessor.load_validate_encoding_set(),
@@ -139,4 +142,7 @@ if __name__ == '__main__':
         predictions = torch.cat(prediction_list, dim=0)
         ground_truths = torch.cat(gt_list, dim=0)
         test_loss = criterion(predictions, ground_truths)
+        last_test_loss = criterion(predictions[:, -1, :], ground_truths[:, -1, :])
+        print(predictions.shape, ground_truths.shape)
         print('\033[35mloss: %.4f\033[0m' % test_loss.item())
+        print('\033[35mloss: %.4f\033[0m' % last_test_loss.item())

@@ -1,30 +1,28 @@
-import numpy as np
 import pickle
 
+import numpy as np
 import torch
 
 
 class DataPreprocessor:
     def __init__(self, file_name, input_length, pred_length, train_set_ratio=.6, validate_set_ratio=.2,
-                 encoding_dimension=6, encoding_type='time_encoding',normalize='std'):
+                 encoding_dimension=6, encoding_type='time_encoding',normalize='std',stride=1):
         data = pickle.load(open(file_name, 'rb'))
         if normalize=='std':
             std=np.std(data,axis=0).reshape(-1,1)
             mean=np.mean(data,axis=0).reshape(-1,1)
             data=((data.transpose()-mean)/std).transpose()
-            # print(std.shape,mean.shape,data.shape)
-            # print(np.mean(data,axis=0),np.std(data,axis=0))
-            # exit()
-        # print('data shape',data.shape)
         self.time_encoding = self.generate_time_encoding(data.shape[0], encoding_type=encoding_type,
                                                          dimension=encoding_dimension)
         frame_length = input_length + pred_length
-        total_samples = data.shape[0] - frame_length + 1
+        window = np.arange(frame_length)
+        dataset_index = np.tile(np.arange(0,data.shape[0] - frame_length + 1,stride), frame_length).reshape(frame_length, -1).T + window
+        total_samples = dataset_index.shape[0]
         self.train_set_size = int(total_samples * train_set_ratio)
         self.validate_set_size = int(total_samples * validate_set_ratio)
         self.test_set_size = total_samples - self.train_set_size - self.validate_set_size
-        window = np.arange(frame_length)
-        dataset_index = np.tile(np.arange(total_samples), frame_length).reshape(frame_length, total_samples).T + window
+        # print(dataset_index,total_samples)
+        # exit()
         self.dataset = data[dataset_index]
         self.time_encoding = self.time_encoding[dataset_index]
 
