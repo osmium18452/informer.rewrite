@@ -1,4 +1,5 @@
 import argparse
+import json
 import os.path
 import platform
 
@@ -25,8 +26,11 @@ if __name__ == '__main__':
     parser.add_argument('-n', '--normalize', type=str, default='std')
     parser.add_argument('-p', '--pred_length', type=int, default=24)
     parser.add_argument('-t', '--encoding_type', type=str, default='time_encoding')
-    parser.add_argument('-s', '--stride', type=int, default=1)
-    parser.add_argument('-u', '--induce_length', type=int, default=5)
+    parser.add_argument('-S', '--stride', type=int, default=1)
+    parser.add_argument('-s', '--save', type=str, default='save')
+    parser.add_argument('-u', '--induce_length', type=int, default=10)
+    parser.add_argument('--fudan',action='store_true')
+    parser.add_argument('--nwpu',action='store_true')
     args = parser.parse_args()
     print(args)
 
@@ -40,7 +44,13 @@ if __name__ == '__main__':
     use_cuda = args.use_cuda
     learning_rate = args.learning_rate
     normalize = args.normalize
-    stride=args.stride
+    stride = args.stride
+    save_path=args.save
+
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+
+    arg_dict=vars(args)
 
     device = torch.device('cuda:' + str(args.cuda_device) if use_cuda else 'cpu')
 
@@ -48,7 +58,10 @@ if __name__ == '__main__':
     if platform.system() == 'Windows':
         data_root = 'E:\\forecastdataset\\pkl'
     else:
-        data_root = '/home/icpc/pycharmproj/forecast.dataset/pkl/'
+        if args.fudan:
+            data_root='/remote-home/liuwenbo/pycproj/forecastdata/pkl/'
+        else:
+            data_root = '/home/icpc/pycharmproj/forecast.dataset/pkl/'
     data_dir = None
     if args.dataset == 'wht':
         data_dir = os.path.join(data_root, 'wht.pkl')
@@ -59,7 +72,7 @@ if __name__ == '__main__':
         exit()
 
     data_preprocessor = DataPreprocessor(data_dir, input_length, pred_length, encoding_type=encoding_type,
-                                         encoding_dimension=encoding_dimension,stride=stride)
+                                         encoding_dimension=encoding_dimension, stride=stride)
     train_set = DataSet(data_preprocessor.load_train_set(), data_preprocessor.load_train_encoding_set(),
                         input_length, induce_length, pred_length)
     validate_set = DataSet(data_preprocessor.load_validate_set(), data_preprocessor.load_validate_encoding_set(),
@@ -155,3 +168,8 @@ if __name__ == '__main__':
         print(predictions.shape, ground_truths.shape)
         print('\033[35mloss: %.4f\033[0m' % test_loss.item())
         print('\033[35mloss: %.4f\033[0m' % last_test_loss.item())
+        result_dict=arg_dict
+        result_dict['loss']=test_loss.item()
+        f=open(os.path.join(save_path,'result.txt'),'w')
+        print(json.dumps(result_dict,ensure_ascii=False),file=f)
+        f.close()
